@@ -34,9 +34,6 @@ Queue payload (set by KontAKT's "Hent filer" trigger):
 OO config:
     Constant   GOApiURL
     Credential GOAktApiUser           — NTLM user/pwd for GO
-    Constant   KontAKTSharePoint      — SharePoint site URL (library = "Delte dokumenter")
-    Credential SharePointCert         — username = thumbprint, password = cert path
-    Credential SharePointAPI          — username = tenant,     password = client id
     Credential KontAKTAPI             — username = base URL,    password = X-API-Key
 """
 from OpenOrchestrator.orchestrator_connection.connection import OrchestratorConnection
