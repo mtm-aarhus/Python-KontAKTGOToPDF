@@ -1,24 +1,20 @@
-"""KontAKT GO → PDF → SharePoint robot.
+"""KontAKT GO → PDF robot.
 
 Queue-driven, one queue element per document. For a single GO document it:
   1. fetches metadata (resolving .goref pointers to the real document),
   2. produces a PDF — GO's built-in converter first (authoritative, handles
      emails + office), falling back to LibreOffice / Pillow / email-render via
      oomtm.pdf for anything GO declines,
-  3. uploads the PDF to the KontAKT SharePoint site (one file per document,
-     overwriting any previous version),
-  4. reports status + the SharePoint URL back to KontAKT.
+  3. POSTs the PDF bytes into KontAKT's local file store (POST .../store);
+     files that can't be converted are stored as their original instead.
 
 Videos / audio / unconvertible binaries are skipped (status='skipped') with a
-note; they're never uploaded.
+note; nothing is stored for them.
 
-The GO session, SharePoint context and cached credentials live on the ``Client``
-opened in ``reset.open_all`` and are reused across every queue element (the
-framework reconnects via ``reset.reset`` on a retry) — so a 2000-document case
-doesn't re-authenticate to SharePoint 2000 times.
-
-SharePoint layout:
-    {site}/Delte dokumenter/{case_id} - {case title}/{GO sagsnr}/{akt} - {dok} - {title}.pdf
+The GO session and cached credentials live on the ``Client`` opened in
+``reset.open_all`` and are reused across every queue element (the framework
+reconnects via ``reset.reset`` on a retry) — so a 2000-document case doesn't
+re-authenticate to GO 2000 times.
 
 Queue payload (set by KontAKT's "Hent filer" trigger):
     {
@@ -47,9 +43,7 @@ import requests
 from robot_framework import reset
 from oomtm import go as oomtm_go
 from oomtm import pdf as oomtm_pdf
-from oomtm import sharepoint as sp
-
-LIBRARY = "Delte dokumenter"
+from oomtm import sharepoint as sp  # filename helpers only (build_filename, sanitize_title)
 
 
 def process(
@@ -118,7 +112,7 @@ def _prepare_file(orchestrator_connection, client, dok_id, work):
     status:
       * "ready"             — upload_path is a PDF
       * "uploaded_original" — couldn't convert; upload the original as-is
-                              (still lands in SharePoint, just not OCR-screenable)
+                              (still stored as the original, just not OCR-screenable)
       * "error"            — couldn't fetch the file at all
     """
     session = client.go_session
@@ -175,7 +169,7 @@ def _prepare_file(orchestrator_connection, client, dok_id, work):
     )
     if cstatus == "ready" and pdf_path is not None:
         return pdf_path, "pdf", "ready", ""
-    # Conversion failed/declined — upload the original so it's still in SharePoint.
+    # Conversion failed/declined — store the original so it's still delivered.
     return src, (ext or "bin"), "uploaded_original", (
         cnote or "Kunne ikke konverteres til PDF — original uploadet (bliver ikke OCR-screenet)."
     )
@@ -183,7 +177,7 @@ def _prepare_file(orchestrator_connection, client, dok_id, work):
 
 def _store_file(client, case_id, doc_id, local_path, filename, kind, note=""):
     """POST the produced file's bytes into KontAKT's local store (replaces the
-    SharePoint upload). The /store endpoint records name/size/hash/status, so no
+    conversion). The /store endpoint records name/size/hash/status, so no
     separate metadata callback is needed. ``kind`` is 'pdf' or 'original'."""
     with open(local_path, "rb") as fh:
         r = requests.post(
