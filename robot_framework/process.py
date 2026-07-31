@@ -41,9 +41,31 @@ from pathlib import Path
 import requests
 
 from robot_framework import reset
+from robot_framework.exceptions import CaseDeleted
 from oomtm import go as oomtm_go
 from oomtm import pdf as oomtm_pdf
 from oomtm import sharepoint as sp  # filename helpers only (build_filename, sanitize_title)
+
+
+# ----- Deleted in KontAKT ----------------------------------------------------
+
+
+def _check_gone(resp) -> None:
+    """Stop cleanly if what this queue element is about was deleted in KontAKT.
+
+    KontAKT answers HTTP 410 with ``{"deleted": "case"|"reference"|"document"}``
+    when the caseworker deleted the KontAKT case, the sag/mappe or the document
+    while this element waited in the queue. Not an error and not retryable, so
+    the queue framework marks the element done and takes the next one.
+    """
+    if resp is None or resp.status_code != 410:
+        return
+    try:
+        body = resp.json() or {}
+    except ValueError:
+        body = {}
+    if body.get("deleted"):
+        raise CaseDeleted(body.get("note") or f"{body['deleted']} deleted in KontAKT")
 
 
 def process(
@@ -186,6 +208,7 @@ def _store_file(client, case_id, doc_id, local_path, filename, kind, note=""):
             headers={"X-API-Key": client.kontakt_key, "Content-Type": "application/octet-stream"},
             data=fh, timeout=600,
         )
+    _check_gone(r)
     r.raise_for_status()
 
 
@@ -194,10 +217,14 @@ def _store_file(client, case_id, doc_id, local_path, filename, kind, note=""):
 
 def _callback(orchestrator_connection, client, case_id: int, doc_id: int, body: dict) -> None:
     try:
-        requests.post(
+        resp = requests.post(
             f"{client.kontakt_base}/api/v1/cases/{case_id}/documents/{doc_id}/file",
             headers={"X-API-Key": client.kontakt_key, "Content-Type": "application/json"},
             json=body, timeout=30,
         )
     except Exception as exc:  # pylint: disable=broad-except
         orchestrator_connection.log_info(f"Callback to KontAKT failed: {exc!r}")
+        return
+    # Outside the except: a network blip stays harmless, but "deleted in KontAKT"
+    # must reach the framework instead of being swallowed as a broad Exception.
+    _check_gone(resp)
