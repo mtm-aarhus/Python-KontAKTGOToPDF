@@ -1,5 +1,10 @@
 """KontAKT GO → PDF robot.
 
+GENOPLIVET 2026-11 fra sin git-historik (afe00c5 i Python-KontAKTF2ToPDF), fordi
+migreringen fra GO til F2 tager længere tid end ventet. KontAKT sender et
+dokument hertil, når dets kilde er GO (cases.KILDE_KOER), og til
+KontAKTF2ToPDF, når den er F2. Kontrakten med KontAKT er den samme for begge.
+
 Queue-driven, one queue element per document. For a single GO document it:
   1. fetches metadata (resolving .goref pointers to the real document),
   2. produces a PDF — GO's built-in converter first (authoritative, handles
@@ -182,8 +187,8 @@ def _prepare_file(orchestrator_connection, client, dok_id, work):
 
     if kind == "skip":
         return src, (ext or "bin"), "uploaded_original", (
-            f"Filtypen .{ext} kan ikke konverteres til PDF — uploadet som original "
-            "(bliver ikke OCR-screenet)."
+            f"Filtypen .{ext} kan ikke konverteres til PDF. Filen er gemt som original "
+            "og bliver ikke OCR-screenet."
         )
 
     pdf_path, cstatus, cnote = oomtm_pdf.convert_to_pdf(
@@ -193,7 +198,7 @@ def _prepare_file(orchestrator_connection, client, dok_id, work):
         return pdf_path, "pdf", "ready", ""
     # Conversion failed/declined — store the original so it's still delivered.
     return src, (ext or "bin"), "uploaded_original", (
-        cnote or "Kunne ikke konverteres til PDF — original uploadet (bliver ikke OCR-screenet)."
+        cnote or "Filen kunne ikke konverteres til PDF. Den er gemt som original og bliver ikke OCR-screenet."
     )
 
 
