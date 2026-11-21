@@ -31,10 +31,10 @@ classifiers = [
 # e4cc2d7, hvor oomtm's egne afhaengigheder stadig stod med ">=".
 dependencies = [
     "OpenOrchestrator == 3.*",
-    # [pdf]: GO konverterer selv det meste, men det, GO afviser, konverteres
-    # her med LibreOffice/Pillow (oomtm.pdf). LibreOffice installeres uden
-    # administrator (msiexec /a) ved foerste koersel, ~350 MB, én gang.
-    "oomtm[pdf] @ git+https://github.com/mtm-aarhus/oomtm.git@e27ec606f9d3fa905bed7bd704d98d2f4ff3e903",
+    # oomtm b386b55: PDF'er laves med oomtm.convert (WeasyPrint til mails,
+    # HTML, tekst og CSV; LibreOffice til Office). [pdf] giver motorernes
+    # pakker; motorerne selv installeres uden admin ved første kørsel.
+    "oomtm[pdf] @ git+https://github.com/mtm-aarhus/oomtm.git@b386b557439ae47228325f647d96750e41a6ffd8",
     "requests == 2.34.2",
     "Pillow == 10.4.0",
 ]

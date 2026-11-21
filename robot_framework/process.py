@@ -7,14 +7,18 @@ KontAKTF2ToPDF, når den er F2. Kontrakten med KontAKT er den samme for begge.
 
 Queue-driven, one queue element per document. For a single GO document it:
   1. fetches metadata (resolving .goref pointers to the real document),
-  2. produces a PDF — GO's built-in converter first (authoritative, handles
-     emails + office), falling back to LibreOffice / Pillow / email-render via
-     oomtm.pdf for anything GO declines,
-  3. POSTs the PDF bytes into KontAKT's local file store (POST .../store);
-     files that can't be converted are stored as their original instead.
+  2. downloads the original file,
+  3. converts it with ``oomtm.convert``, the same way every KontAKT PDF robot
+     does (WeasyPrint for mails/HTML/text/CSV, LibreOffice for Office, Pillow
+     for images). GO's own PDF converter is NOT used any more (2026-11): the
+     same file must give the same PDF whether it came from GO, F2, Nova or a
+     mappe,
+  4. POSTs the PDF bytes into KontAKT's local file store (POST .../store);
+     files that can't be converted (video, audio, unknown types, broken files)
+     are stored as their original instead, with oomtm's reason as the note.
 
-Videos / audio / unconvertible binaries are skipped (status='skipped') with a
-note; nothing is stored for them.
+A mail's attachments are their own documents in GO, so a mail's PDF is just
+the mail.
 
 The GO session and cached credentials live on the ``Client`` opened in
 ``reset.open_all`` and are reused across every queue element (the framework
@@ -48,7 +52,7 @@ import requests
 from robot_framework import reset
 from robot_framework.exceptions import CaseDeleted
 from oomtm import go as oomtm_go
-from oomtm import pdf as oomtm_pdf
+from oomtm import convert
 from oomtm import sharepoint as sp  # filename helpers only (build_filename, sanitize_title)
 
 
@@ -133,20 +137,23 @@ def _convert_and_store(orchestrator_connection, client, case_id, doc_id, dok_id,
         return {"status": status}
 
 
+ORIGINAL_NOTE = "Filen udleveres, som den er, og bliver ikke screenet."
+
+
 def _prepare_file(orchestrator_connection, client, dok_id, work):
     """Return (upload_path, upload_ext, status, note) for one GO document.
 
     status:
-      * "ready"             — upload_path is a PDF
-      * "uploaded_original" — couldn't convert; upload the original as-is
-                              (still stored as the original, just not OCR-screenable)
-      * "error"            — couldn't fetch the file at all
+      * "ready"             - upload_path is a PDF made by oomtm.convert; the
+                              note carries its warnings (tracked changes, ...)
+      * "uploaded_original" - couldn't convert; upload the original as-is
+                              (still delivered, just not screenable), and the
+                              note says why
     """
     session = client.go_session
     go_url = client.go_url
     meta = oomtm_go.fetch_metadata(session, base_url=go_url, dok_id=dok_id)
     ext = (meta.get("ext") or "").lower()
-    version_ui = meta.get("version_ui")
 
     # Resolve .goref pointer documents to the real document id.
     if ext == "goref":
@@ -158,48 +165,15 @@ def _prepare_file(orchestrator_connection, client, dok_id, work):
             orchestrator_connection.log_info(f"Resolved goref -> {dok_id}")
             meta = oomtm_go.fetch_metadata(session, base_url=go_url, dok_id=dok_id)
             ext = (meta.get("ext") or "").lower()
-            version_ui = meta.get("version_ui")
 
-    # Already a PDF — just download it.
-    if ext == "pdf":
-        out = work / f"{dok_id}.pdf"
-        oomtm_go.download_file(session, base_url=go_url, dok_id=dok_id, local_path=str(out))
-        return out, "pdf", "ready", ""
-
-    kind = oomtm_pdf.classify(ext)
-
-    # Prefer GO's built-in converter (authoritative; handles emails + office),
-    # except for kinds we know can't become PDF (video/audio).
-    if kind != "skip" and version_ui:
-        pdf_bytes = oomtm_go.pdf_convert(
-            username=client.go_user, password=client.go_pass,
-            base_url=go_url, dok_id=dok_id, version_ui=version_ui,
-        )
-        if pdf_bytes:
-            out = work / f"{dok_id}.pdf"
-            out.write_bytes(pdf_bytes)
-            return out, "pdf", "ready", ""
-        orchestrator_connection.log_info("GO PDF conversion declined — falling back to oomtm.pdf")
-
-    # Download the original — we'll either convert it or upload it as-is.
+    # The original - oomtm makes the PDF (a PDF stays as it is).
     src = work / f"{dok_id}.{ext or 'bin'}"
     oomtm_go.download_file(session, base_url=go_url, dok_id=dok_id, local_path=str(src))
-
-    if kind == "skip":
-        return src, (ext or "bin"), "uploaded_original", (
-            f"Filtypen .{ext} kan ikke konverteres til PDF. Filen er gemt som original "
-            "og bliver ikke OCR-screenet."
-        )
-
-    pdf_path, cstatus, cnote = oomtm_pdf.convert_to_pdf(
-        src, ext, work, auto_install=True, log=orchestrator_connection.log_info,
-    )
-    if cstatus == "ready" and pdf_path is not None:
-        return pdf_path, "pdf", "ready", ""
-    # Conversion failed/declined — store the original so it's still delivered.
-    return src, (ext or "bin"), "uploaded_original", (
-        cnote or "Filen kunne ikke konverteres til PDF. Den er gemt som original og bliver ikke OCR-screenet."
-    )
+    r = convert.convert(src, work / "pdf", name=f"dokument.{ext}" if ext else src.name,
+                        log=orchestrator_connection.log_info)
+    if r.ok:
+        return r.pdf, "pdf", "ready", " ".join(r.warnings)
+    return src, (ext or "bin"), "uploaded_original", f"{r.note} {ORIGINAL_NOTE}"
 
 
 def _store_file(client, case_id, doc_id, local_path, filename, kind, note=""):

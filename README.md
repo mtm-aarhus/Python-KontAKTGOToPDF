@@ -9,12 +9,10 @@ KontAKT triggers this once per document when a caseworker transfers a case's fil
 For one GO document:
 
 1. Looks up the document's metadata and resolves `.goref` pointer documents to the real document.
-2. Produces a PDF:
-   - first via **GO's built-in converter** (authoritative; handles e-mails and Office files),
-   - falling back to LibreOffice / Pillow (images) / e-mail rendering via the shared [`oomtm`](https://github.com/mtm-aarhus/oomtm) library for anything GO declines.
+2. Downloads the original and converts it with the shared [`oomtm`](https://github.com/mtm-aarhus/oomtm) library (`oomtm.convert`), the same way every KontAKT PDF robot does: WeasyPrint for e-mails, HTML, text and CSV, LibreOffice for Office files, Pillow for images. **GO's built-in converter is not used any more** (since 2026-11): the same file must give the same PDF whether it came from GO, F2, Nova or a mappe.
 3. POSTs the PDF bytes into KontAKT's local file store (`POST /api/v1/cases/{id}/documents/{doc_id}/store`) — one call does the upload and records name/size/SHA-256/status.
 
-Files that can't be converted are stored **as their original** (still delivered, just not OCR-screenable). Video / audio / unconvertible binaries are skipped.
+Files that can't be converted (video, audio, unknown types, broken files) are stored **as their original**, with oomtm's reason as the note: still delivered, just not screenable. A mail's attachments are their own documents in GO, so a mail's PDF is just the mail.
 
 ## Input (one document)
 
@@ -40,4 +38,4 @@ The PDF (or unconverted original) written into KontAKT's file store; the `/store
 
 ## Dependencies
 
-The shared [`oomtm`](https://github.com/mtm-aarhus/oomtm) library (`go`, `pdf`). PDF conversion auto-installs LibreOffice on the worker if it's missing (no admin required).
+The shared [`oomtm`](https://github.com/mtm-aarhus/oomtm) library (`go`, `convert`), pinned to a commit, with the `[pdf]` extra. On the first run, `reset.open_all` makes oomtm install its engines without admin rights, once per machine: LibreOffice (~350 MB) and WeasyPrint's Windows libraries (~30 MB), both from [oomtm_setup](https://github.com/mtm-aarhus/oomtm_setup) first.
